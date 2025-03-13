@@ -204,7 +204,7 @@ void RecordTable::write_header(FieldWidth max_name_length) {
     cout << std::left << "name";
 
     for (auto it = courses.begin(); it != courses.end(); ++it) {
-        cout.width(max(it->length(), BASE_WIDTH));
+        cout.width(max(it->length() + 1, BASE_WIDTH));
         cout << std::left << *it;
     }
 
