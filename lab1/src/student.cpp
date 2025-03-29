@@ -40,6 +40,7 @@ void Record::read_string(string line, char delimiter) {
         score_str = strip(score_str);
         *it = std::stoi(score_str);
     }
+    avg_score = get_avg_score();
 }
 
 void Record::output_inline(int max_name_length) {
