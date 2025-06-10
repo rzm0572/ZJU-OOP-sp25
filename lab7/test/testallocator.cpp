@@ -1,5 +1,4 @@
-#include "myallocator.h"
-#include "ballocator.h"
+#include "mallocator.h"
 #include <vector>
 #include <iostream>
 #include <chrono>
@@ -8,8 +7,6 @@
 #define FLOAT 2
 #define DOUBLE 3
 #define CLASS  4
-
-#define MyAllocator bAllocator
 
 #ifndef MyAllocator
     #define MyAllocator std::allocator
@@ -126,7 +123,7 @@ int main()
 
     Timer *timer = new Timer();
 
-    int TEST_TIMES = 40;
+    int TEST_TIMES = 1;
 
     while (TEST_TIMES--) {
         int tIndex, tSize;
