@@ -4,6 +4,18 @@
 #include <limits>
 #include <new>
 #include <iostream>
+#include <cstdlib>
+
+class MallocAllocator {
+public:
+    static void* allocate(size_t size) {
+        void* result = malloc(size);
+        return result;
+    }
+    static void deallocate(void* ptr) {
+        free(ptr);
+    }
+};
 
 template<class _Tp, size_t BlockSize = 4096>
 class mAllocator{
