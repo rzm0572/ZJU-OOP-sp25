@@ -1,10 +1,15 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 #include <new>
 #include <iostream>
 #include <cstdlib>
+
+#ifndef DEFAULT_ALLOC_SLOT
+    #define DEFAULT_ALLOC_SLOT 20
+#endif
 
 class MallocAllocator {
 public:
@@ -18,7 +23,7 @@ public:
 };
 
 template<class _Tp, size_t BlockSize = 4096>
-class mAllocator{
+class mAllocator {
 public:
     using _Not_user_specialized = void;
     using value_type = _Tp;
@@ -54,231 +59,89 @@ public:
 
 private:
 
-    template<size_type SlotSize>
-    union Slot {
-        uint8_t data[SlotSize];
-        Slot<SlotSize>* next;
+    constexpr static size_t BLOCK_SIZE = BlockSize;
+    constexpr static int SLOT_SIZE_NUM = 16;
+    constexpr static int SLOT_SIZE_AVAILABLE[SLOT_SIZE_NUM] = {
+        8, 16, 24, 32, 40, 48, 56, 64,
+        72, 80, 88, 96, 104, 112, 120, 128
     };
 
-    // 8,16,32,64,128,256,512,1016,2032,4064
-
-    template<size_type SlotSize>
-    class Block {
-        friend class mAllocator;
-    private:
-        using Slot = Slot<SlotSize>;
-
-    public:
-        Block(Block* _prev = nullptr, Block* _next = nullptr) noexcept
-            : prev(_prev), next(_next), free_list(nullptr) {
-
-            slots_used = 0;
-            Slot* slots = reinterpret_cast<Slot*>(data);
-            for (int64_t i = SLOTS_PER_BLOCK - 1; i >= 0; --i) {
-                slots[i].next = free_list;
-                free_list = &slots[i];
-            }
-        }
-        ~Block() {
-            prev = nullptr;
-            next = nullptr;
-            free_list = nullptr;
-        }
-
-        Slot* allocate_slot() {
-            if (is_full()) {
-                return nullptr;
-            }
-            
-            Slot* slot = free_list;
-            free_list = free_list->next;
-            slots_used++;
-            return slot;
-        }
-
-        void deallocate_slot(pointer ptr) {
-            if (ptr == nullptr) {
-                return;
-            }
-            if (is_empty()) {
-                return;
-            }
-
-            Slot* slot = reinterpret_cast<Slot*>(ptr);
-            slot->next = free_list;
-            free_list = slot;
-            slots_used--;
-        }
-
-        bool is_full() const {
-            return slots_used == SLOTS_PER_BLOCK;
-        }
-
-        bool is_empty() const {
-            return slots_used == 0;
-        }
-
-        bool is_avail() const {
-            return slots_used < BLOCK_AVAILABLE_THRESHOLD;
-        }
-
-    private:
-        static constexpr size_type META_SIZE = sizeof(Block*) * 2 + sizeof(Slot*) + sizeof(size_type);
-        static constexpr size_type SLOTS_PER_BLOCK = (BlockSize - META_SIZE) / sizeof(Slot);
-        static constexpr size_type OBJ_PER_SLOT = sizeof(Slot) / sizeof(value_type);
-        static constexpr size_type BLOCK_AVAILABLE_THRESHOLD = (size_type)(SLOTS_PER_BLOCK * 1);
-
-    private:
-        Block* prev;
-        Block* next;
-        Slot* free_list;
-        int64_t slots_used;
-        uint8_t data[BlockSize - META_SIZE];
+    union slot_t {
+        slot_t* next;
+        _Tp data[0];
     };
 
-    template<size_type SlotSize>
-    inline static Block<SlotSize>* avail_blocks;
-
-    template<size_type SlotSize>
-    inline static Block<SlotSize>* avail_blocks_tail;
-
-    template<size_type SlotSize>
-    inline static Block<SlotSize>* full_blocks;
-
-    template<size_type SlotSize>
-    Block<SlotSize>* new_block() {
-        Block<SlotSize>* block = new (std::align_val_t(BlockSize)) Block<SlotSize>(nullptr, avail_blocks<SlotSize>);
-        if (avail_blocks<SlotSize> != nullptr) {
-            (avail_blocks<SlotSize>)->prev = block;
-        }
-        if (avail_blocks_tail<SlotSize> == nullptr) {
-            avail_blocks_tail<SlotSize> = block;
-        }
-        avail_blocks<SlotSize> = block;
-        return block;
+    int get_slot_index(size_t size) {
+        return size > 128 ? -1 : (size - 1) >> 3;
     }
 
-    template<size_type SlotSize>
-    Block<SlotSize>* get_avail_block() {
-        if (avail_blocks<SlotSize> == nullptr) {
-            return new_block<SlotSize>();
-        }
-        return avail_blocks<SlotSize>;
-    }
+    static slot_t* free_slot_list[SLOT_SIZE_NUM];
+    static uint8_t* memory_pool_start;
+    static uint8_t* memory_pool_end;
 
-    template<size_type SlotSize>
-    Slot<SlotSize>* allocate_slot() {
-        Block<SlotSize>* block = get_avail_block<SlotSize>();
-        Slot<SlotSize>* slot = block->allocate_slot();
-        if (slot == nullptr) {
-            return nullptr;
-        }
-        if (block->is_full()) {
-            avail_blocks<SlotSize> = block->next;
-            if (block->next != nullptr) {
-                block->next->prev = nullptr;
-            } else {
-                avail_blocks_tail<SlotSize> = nullptr;
-            }
-            if (full_blocks<SlotSize> != nullptr) {
-                full_blocks<SlotSize>->prev = block;
-            }
-            block->prev = nullptr;
-            block->next = full_blocks<SlotSize>;
-            full_blocks<SlotSize> = block;
-            // std::cout << "Move block " << block << " to full_blocks (slots_used: " << block->slots_used << ")" << std::endl;
-        }
-        return slot;
-    }
+    void* extend_free_slot_list(size_type size);
 
-    template<size_type SlotSize>
-    void deallocate_slot(pointer ptr) {
-        if (ptr == nullptr) {
-            return;
-        }
+    void* alloc_slot_mempool(size_type size, int count);
 
-        Block<SlotSize>* block = reinterpret_cast<Block<SlotSize>*>(reinterpret_cast<uint8_t*>(reinterpret_cast<unsigned long>(ptr) & ~(BlockSize - 1)));
-        if (block->is_empty()) {
-            return;
-        }
+    void inflate_mempool(size_type size);
 
-        block->deallocate_slot(ptr);
-
-        if (block->is_avail()) {
-            if (block->prev != nullptr) {
-                block->prev->next = block->next;
-            } else {
-                full_blocks<SlotSize> = block->next;
-            }
-
-            if (block->next != nullptr) {
-                block->next->prev = block->prev;
-            }
-
-            block->prev = avail_blocks_tail<SlotSize>;
-            block->next = nullptr;
-
-            if (avail_blocks_tail<SlotSize> != nullptr) {
-                avail_blocks_tail<SlotSize>->next = block;
-            }
-            avail_blocks_tail<SlotSize> = block;
-
-            if (avail_blocks<SlotSize> == nullptr) {
-                avail_blocks<SlotSize> = block;
-            }
-
-            // std::cout << "Move block " << block << " to avail_blocks (slots_used: " << block->slots_used << ", ptr: " << ptr << ")" << std::endl;
-        }
-    }
-
-    template<size_type SlotSize>
-    void initialize_block_list() {
-        avail_blocks<SlotSize> = nullptr;
-        avail_blocks_tail<SlotSize> = nullptr;
-        full_blocks<SlotSize> = nullptr;
-    }
-
-    template<size_type SlotSize>
-    void free_unused_blocks() {
-        Block<SlotSize>* curr = avail_blocks<SlotSize>;
-        while (curr != nullptr) {
-            if (curr->is_empty()) {
-                if (avail_blocks<SlotSize> == curr) {
-                    avail_blocks<SlotSize> = curr->next;
-                }
-                if (avail_blocks_tail<SlotSize> == curr) {
-                    avail_blocks_tail<SlotSize> = curr->prev;
-                }
-                if (curr->prev != nullptr) {
-                    curr->prev->next = curr->next;
-                }
-                if (curr->next != nullptr) {
-                    curr->next->prev = curr->prev;
-                }
-                Block<SlotSize>* next = curr->next;
-                if (curr->free_list != nullptr) {
-                    delete curr;
-                }
-                curr = next;
-            } else {
-                curr = curr->next;
-            }
-        }
-    }
 };
+
+template<class _Tp, size_t BlockSize>
+typename mAllocator<_Tp, BlockSize>::slot_t* mAllocator<_Tp, BlockSize>::free_slot_list[SLOT_SIZE_NUM] = {nullptr};
+
+template<class _Tp, size_t BlockSize>
+uint8_t* mAllocator<_Tp, BlockSize>::memory_pool_start = nullptr;
+
+template<class _Tp, size_t BlockSize>
+uint8_t* mAllocator<_Tp, BlockSize>::memory_pool_end = nullptr;
+
+template<class _Tp, size_t BlockSize>
+void* mAllocator<_Tp, BlockSize>::extend_free_slot_list(size_type size) {
+    int count = DEFAULT_ALLOC_SLOT;
+    int slot_index = get_slot_index(size);
+    int alloc_size = SLOT_SIZE_AVAILABLE[slot_index];
+    if (slot_index == -1) {
+        return nullptr;
+    }
+
+    slot_t* slot = reinterpret_cast<slot_t*>(alloc_slot_mempool(alloc_size, count));
+    for (int i = 0; i < count; i++) {
+        slot->next = free_slot_list[slot_index];
+        free_slot_list[slot_index] = slot;
+        slot = reinterpret_cast<slot_t*>(reinterpret_cast<uint8_t*>(slot) + alloc_size);
+    }
+    return free_slot_list[slot_index];
+}
+
+template<class _Tp, size_t BlockSize>
+void* mAllocator<_Tp, BlockSize>::alloc_slot_mempool(size_type size, int count) {
+    size_type alloc_size = size * count;
+    if (memory_pool_start + alloc_size > memory_pool_end) {
+        inflate_mempool(alloc_size);
+    }
+
+    slot_t* slot = reinterpret_cast<slot_t*>(memory_pool_start);
+    memory_pool_start = reinterpret_cast<uint8_t*>(memory_pool_start) + alloc_size;
+    return slot;
+}
+
+template<class _Tp, size_t BlockSize>
+void mAllocator<_Tp, BlockSize>::inflate_mempool(size_type size) {
+    size_type alloc_size = (size + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE;
+
+    memory_pool_start = static_cast<uint8_t*>(malloc(alloc_size));
+    if (!memory_pool_start) {
+        memory_pool_end = nullptr;
+        throw std::bad_alloc();
+    }
+
+    memory_pool_end = memory_pool_start + alloc_size;    
+}
 
 template<typename _Tp, size_t BlockSize>
 mAllocator<_Tp, BlockSize>::mAllocator() noexcept {
-    initialize_block_list<8>();
-    initialize_block_list<16>();
-    initialize_block_list<32>();
-    initialize_block_list<64>();
-    initialize_block_list<128>();
-    initialize_block_list<256>();
-    initialize_block_list<512>();
-    initialize_block_list<1016>();
-    initialize_block_list<2032>();
-    initialize_block_list<4064>();
+    
 }
 
 template<typename _Tp, size_t BlockSize>
@@ -289,91 +152,54 @@ template<class _Up>
 mAllocator<_Tp, BlockSize>::mAllocator(const mAllocator<_Up>& other) noexcept {}
 
 template<typename _Tp, size_t BlockSize>
-mAllocator<_Tp, BlockSize>::~mAllocator() {
-    // free_unused_blocks<8>();
-    // free_unused_blocks<16>();
-    // free_unused_blocks<32>();
-    // free_unused_blocks<64>();
-    // free_unused_blocks<128>();
-    // free_unused_blocks<256>();
-    // free_unused_blocks<512>();
-    // free_unused_blocks<1016>();
-    // free_unused_blocks<2032>();
-    // free_unused_blocks<4064>();
-}
+mAllocator<_Tp, BlockSize>::~mAllocator() {}
 
 template<typename _Tp, size_t BlockSize>
-typename mAllocator<_Tp, BlockSize>::pointer
-mAllocator<_Tp, BlockSize>::address(reference x) const noexcept {
+typename mAllocator<_Tp, BlockSize>::pointer mAllocator<_Tp, BlockSize>::address(reference x) const noexcept {
     return &x;
 }
 
 template<typename _Tp, size_t BlockSize>
-typename mAllocator<_Tp, BlockSize>::const_pointer
-mAllocator<_Tp, BlockSize>::address(const_reference x) const noexcept {
+typename mAllocator<_Tp, BlockSize>::const_pointer mAllocator<_Tp, BlockSize>::address(const_reference x) const noexcept {
     return &x;
 }
 
 template<typename _Tp, size_t BlockSize>
-typename mAllocator<_Tp, BlockSize>::pointer
-mAllocator<_Tp, BlockSize>::allocate(size_type n, const _Not_user_specialized* hint) {
-    size_type slot_size = n * sizeof(value_type);
-    if (slot_size <= 8) {
-        return reinterpret_cast<pointer>(allocate_slot<8>());
-    } else if (slot_size <= 16) {
-        return reinterpret_cast<pointer>(allocate_slot<16>());
-    } else if (slot_size <= 32) {
-        return reinterpret_cast<pointer>(allocate_slot<32>());
-    } else if (slot_size <= 64) {
-        return reinterpret_cast<pointer>(allocate_slot<64>());
-    } else if (slot_size <= 128) {
-        return reinterpret_cast<pointer>(allocate_slot<128>());
-    } else if (slot_size <= 256) {
-        return reinterpret_cast<pointer>(allocate_slot<256>());
-    } else if (slot_size <= 512) {
-        return reinterpret_cast<pointer>(allocate_slot<512>());
-    } else if (slot_size <= 1016) {
-        return reinterpret_cast<pointer>(allocate_slot<1016>());
-    } else if (slot_size <= 2032) {
-        return reinterpret_cast<pointer>(allocate_slot<2032>());
-    } else if (slot_size <= 4064) {
-        return reinterpret_cast<pointer>(allocate_slot<4064>());
+typename mAllocator<_Tp, BlockSize>::pointer mAllocator<_Tp, BlockSize>::allocate(size_type n, const _Not_user_specialized* hint) {
+    int alloc_size = n * sizeof(value_type);
+    int index = get_slot_index(alloc_size);
+    if (index == -1) {
+        return reinterpret_cast<pointer>(MallocAllocator::allocate(alloc_size));
     } else {
-        return reinterpret_cast<pointer>(::operator new(n * sizeof(value_type)));
+        if (free_slot_list[index] == nullptr) {
+            extend_free_slot_list(alloc_size);
+        }
+        slot_t* slot = free_slot_list[index];
+        free_slot_list[index] = slot->next;
+        // std::cout << "allocate slot " << slot << " from slot list " << index << std::endl;
+        return slot->data;
     }
 }
 
 template<typename _Tp, size_t BlockSize>
 void mAllocator<_Tp, BlockSize>::deallocate(pointer p, size_type n) {
-    size_type slot_size = n * sizeof(value_type);
-    if (slot_size <= 8) {
-        deallocate_slot<8>(p);
-    } else if (slot_size <= 16) {
-        deallocate_slot<16>(p);
-    } else if (slot_size <= 32) {
-        deallocate_slot<32>(p);
-    } else if (slot_size <= 64) {
-        deallocate_slot<64>(p);
-    } else if (slot_size <= 128) {
-        deallocate_slot<128>(p);
-    } else if (slot_size <= 256) {
-        deallocate_slot<256>(p);
-    } else if (slot_size <= 512) {
-        deallocate_slot<512>(p);
-    } else if (slot_size <= 1016) {
-        deallocate_slot<1016>(p);
-    } else if (slot_size <= 2032) {
-        deallocate_slot<2032>(p);
-    } else if (slot_size <= 4064) {
-        deallocate_slot<4064>(p);
+    if (p == nullptr) {
+        throw std::bad_alloc();
+    }
+
+    int free_size = n * sizeof(value_type);
+    int index = get_slot_index(free_size);
+    if (index == -1) {
+        MallocAllocator::deallocate(static_cast<void*>(p));
     } else {
-        ::operator delete(p);
+        slot_t* slot = reinterpret_cast<slot_t*>(p);
+        slot->next = free_slot_list[index];
+        free_slot_list[index] = slot;
     }
 }
 
 template<typename _Tp, size_t BlockSize>
-typename mAllocator<_Tp, BlockSize>::size_type
-mAllocator<_Tp, BlockSize>::max_size() const noexcept {
+typename mAllocator<_Tp, BlockSize>::size_type mAllocator<_Tp, BlockSize>::max_size() const noexcept {
     return std::numeric_limits<size_type>::max() / sizeof(value_type);
 }
 
@@ -390,4 +216,3 @@ void mAllocator<_Tp, BlockSize>::destroy(_Up* p) {
         p->~_Up();
     }
 }
-

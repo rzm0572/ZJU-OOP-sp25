@@ -17,11 +17,11 @@ set_target_properties(test_stdallocator PROPERTIES CXX_STANDARD 17)
 target_compile_options(test_stdallocator PUBLIC -Wall -g -O0)
 target_include_directories(test_stdallocator PUBLIC include)
 
-add_executable(test_mallocator "test/testallocator.cpp")
-set_target_properties(test_mallocator PROPERTIES CXX_STANDARD 17)
-target_compile_definitions(test_mallocator PUBLIC MyAllocator=mAllocator)
-target_compile_options(test_mallocator PUBLIC -Wall -g -O0)
-target_include_directories(test_mallocator PUBLIC include)
+add_executable(test_mtallocator "test/testallocator.cpp")
+set_target_properties(test_mtallocator PROPERTIES CXX_STANDARD 17)
+target_compile_definitions(test_mtallocator PUBLIC MyAllocator=mtAllocator)
+target_compile_options(test_mtallocator PUBLIC -Wall -g -O0)
+target_include_directories(test_mtallocator PUBLIC include)
 
 add_executable(test_lallocator "test/testallocator.cpp")
 set_target_properties(test_lallocator PROPERTIES CXX_STANDARD 17)
@@ -34,3 +34,22 @@ set_target_properties(test_pallocator PROPERTIES CXX_STANDARD 17)
 target_compile_definitions(test_pallocator PUBLIC MyAllocator=pAllocator)
 target_compile_options(test_pallocator PUBLIC -Wall -g -O0)
 target_include_directories(test_pallocator PUBLIC include)
+
+set(DFT_SLOT
+    1
+    2
+    4
+    8
+    12
+    16
+    20
+    24
+)
+
+foreach(slot IN LISTS DFT_SLOT)
+    add_executable(test_mallocator_${slot} "test/testallocator.cpp")
+    set_target_properties(test_mallocator_${slot} PROPERTIES CXX_STANDARD 17)
+    target_compile_definitions(test_mallocator_${slot} PUBLIC MyAllocator=mAllocator DEFAULT_ALLOC_SLOT=${slot})
+    target_compile_options(test_mallocator_${slot} PUBLIC -Wall -g -O0)
+    target_include_directories(test_mallocator_${slot} PUBLIC include)
+endforeach()

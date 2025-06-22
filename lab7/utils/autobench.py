@@ -13,7 +13,9 @@ now = datetime.datetime.now()
 timestamp = now.strftime("%Y%m%d_%H%M%S")
 # 定义程序和配置文件
 config_files = ["none"]
-programs = ["./build/test_lallocator", "./build/test_stdallocator", "./build/test_pallocator", "./build/test_mallocator"]
+# programs = ["./build/test_mtallocator", "./build/test_stdallocator", "./build/test_pallocator", "./build/test_mallocator", "./build/test_lallocator"]
+slot_num = [1, 2, 4, 8, 12, 16, 20, 24]
+programs = [f"./build/test_mallocator_{n}" for n in slot_num] + ["./build/test_stdallocator"]
 
 colors = ['royalblue', 'orangered', 'dodgerblue', 'blueviolet', 'maroon', 'crimson', 'teal', 'olive', 'cyan', 'brown', 'royalblue']
 num_runs = 40  # 运行次数 N

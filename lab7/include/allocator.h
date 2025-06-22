@@ -3,8 +3,12 @@
 #include<type_traits>
 #include<iostream>
 #define BLOCK_SIZE 64
-#define ENTRY_SIZE 128
+#define ENTRY_SIZE 1024
 
+union Block{//储存元素的最小内存块
+    char data[BLOCK_SIZE];//储存数据
+    Block* next;//指向下一个Block指针
+};
 
 template<typename T>
 class Allocator {
@@ -29,7 +33,8 @@ public:
     Allocator(){
         // FirstEntry = nullptr;
         // FreeBlock = nullptr;
-        newEntry();
+        FreeBlock = new Block;
+        FreeBlock->next = nullptr;
     };//构造函数
     ~Allocator(){
         // Entry* p = FirstEntry;
@@ -65,39 +70,19 @@ public:
     const size_t BlockNum = ENTRY_SIZE/sizeof(Block);
     const size_t ElementNum = BLOCK_SIZE/sizeof(value_type);
 
-    union Block{//储存元素的最小内存块
-        char data[BLOCK_SIZE];//储存数据
-        Block* next;//指向下一个Block指针
-    };
-    
-    struct Entry{//每次分配的内存块大小为ENTRY_SIZE
-        Block* block;
-        Entry* next;//下一个Entry指针
-    };
-    static Entry* FirstEntry;
+
     static Block* FreeBlock;
 
-    void newEntry(){//创建新的Entry
-        Entry* newEntry = new Entry;
-        //先将 Entrys 链接起来
-        newEntry->next = FirstEntry;
-        FirstEntry = newEntry;
-        //分配足够的空间
-        newEntry->block = static_cast<Block*>(::operator new(ENTRY_SIZE));
-        //初始化每个block，即将每个block的next指针指向第一个空出的block
-        for(size_t i=0;i<BlockNum;i++){
-            Block* block = newEntry->block+i;
-            block->next = FreeBlock;
-            FreeBlock = block;
-        }
-    }
+
 
     void* allocateBlock(size_t n){//分配新的内存块
         if(n>ElementNum){//如果要分配的元素数量大于一个block的容量，则不使用memory pool
             return (::operator new(n * sizeof(value_type)));
         }
         if(FreeBlock == nullptr){//如果没有空闲的block，则创建一个新的Entry
-            newEntry();
+            
+            Block* currentBlock=new Block;
+            return static_cast<void*>(currentBlock->data);
         }
         Block* currentBlock = FreeBlock;
         FreeBlock = FreeBlock->next; // 移动空闲链表头指针
@@ -131,9 +116,9 @@ public:
 
 
 
-// 类外定义静态成员（关键修正点）
-template<typename T>
-typename Allocator<T>::Entry* Allocator<T>::FirstEntry = nullptr;
+// // 类外定义静态成员（关键修正点）
+// template<typename T>
+// typename Allocator<T>::Entry* Allocator<T>::FirstEntry = nullptr;
 
 template<typename T>
-typename Allocator<T>::Block* Allocator<T>::FreeBlock = nullptr;
+Block* Allocator<T>::FreeBlock = nullptr;
